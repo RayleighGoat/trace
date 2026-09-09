@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Trace — Suivi de trajets</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --ink: #10131A;
+    --panel: rgba(16,19,26,0.88);
+    --panel-solid: #171B24;
+    --amber: #E3A34E;
+    --amber-dim: rgba(227,163,78,0.28);
+    --paper: #EDEAE2;
+    --paper-dim: rgba(237,234,226,0.55);
+    --line: rgba(237,234,226,0.13);
+    --danger: #D8574A;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; width:100%; height:100%; background:var(--ink); color:var(--paper); font-family:'Space Grotesk', sans-serif; overflow:hidden; }
+  .mono{ font-family:'Space Mono', monospace; }
+  button{ font-family:inherit; }
+
+  #map{ position:absolute; inset:0; z-index:1; }
+  .leaflet-control-attribution{ font-size:9px !important; background:rgba(16,19,26,0.7) !important; color:var(--paper-dim) !important; }
+  .leaflet-control-attribution a{ color:var(--amber) !important; }
+  .leaflet-control-zoom{ display:none; }
+
+  .screen{ position:fixed; inset:0; z-index:20; display:none; }
+  .screen.active{ display:flex; }
+
+  /* ---------- HOME (map + controls) ---------- */
+  #screen-home{ flex-direction:column; pointer-events:none; }
+  #screen-home > *{ pointer-events:auto; }
+  #home-top{ display:flex; justify-content:space-between; align-items:center; padding:20px 20px 0; background:linear-gradient(to bottom, rgba(16,19,26,0.75), transparent); padding-bottom:40px; }
+  #brand{ display:flex; flex-direction:column; }
+  #brand .mark{ font-family:'Space Mono', monospace; font-size:10px; letter-spacing:0.2em; color:var(--amber); text-transform:uppercase; }
+  #brand h1{ margin:2px 0 0; font-size:22px; font-weight:700; }
+  .icon-btn{ width:44px; height:44px; border-radius:50%; background:var(--panel); border:1px solid var(--line); backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:18px; color:var(--paper); }
+  .icon-btn:hover{ border-color:var(--amber); }
+
+  #home-bottom{ margin-top:auto; padding:0 20px 30px; display:flex; flex-direction:column; align-items:center; gap:14px; background:linear-gradient(to top, rgba(16,19,26,0.85), transparent); padding-top:50px; }
+  #gps-status{ font-family:'Space Mono', monospace; font-size:11px; color:var(--paper-dim); letter-spacing:0.05em; display:flex; align-items:center; gap:6px; }
+  #gps-dot{ width:7px; height:7px; border-radius:50%; background:var(--paper-dim); }
+  #gps-dot.ok{ background:#6FCF97; box-shadow:0 0 6px #6FCF97; }
+  #gps-dot.bad{ background:var(--danger); }
+
+  #record-btn{
+    width:74px; height:74px; border-radius:50%; background:var(--amber); border:4px solid rgba(227,163,78,0.25);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 6px 24px rgba(227,163,78,0.35);
+  }
+  #record-btn .dot{ width:26px; height:26px; border-radius:50%; background:var(--ink); }
+  #record-hint{ font-size:12.5px; color:var(--paper-dim); }
+
+  /* ---------- RECORDING ---------- */
+  #screen-recording{ flex-direction:column; pointer-events:none; }
+  #screen-recording > *{ pointer-events:auto; }
+  #rec-top{ padding:20px; display:flex; justify-content:space-between; align-items:flex-start; background:linear-gradient(to bottom, rgba(16,19,26,0.8), transparent); padding-bottom:40px; }
+  #rec-badge{ display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--danger); padding:8px 14px; border-radius:2px; backdrop-filter:blur(8px); }
+  #rec-badge .pulse{ width:8px; height:8px; border-radius:50%; background:var(--danger); animation:pulse 1.4s infinite; }
+  @keyframes pulse{ 0%,100%{ opacity:1; } 50%{ opacity:0.3; } }
+  #rec-badge span{ font-family:'Space Mono', monospace; font-size:11px; letter-spacing:0.1em; text-transform:uppercase; }
+
+  #rec-stats{ margin-top:auto; padding:0 16px 20px; }
+  #rec-stats-panel{ background:var(--panel); border:1px solid var(--line); border-radius:2px; padding:18px 20px; backdrop-filter:blur(10px); display:flex; justify-content:space-around; margin-bottom:14px; }
+  .stat{ text-align:center; }
+  .stat .val{ font-family:'Space Mono', monospace; font-size:22px; font-weight:700; color:var(--amber); }
+  .stat .lbl{ font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--paper-dim); margin-top:3px; }
+
+  #stop-btn{ width:100%; padding:16px; background:var(--danger); border:none; color:#fff; font-size:15px; font-weight:700; border-radius:2px; cursor:pointer; letter-spacing:0.02em; }
+
+  /* ---------- SAVE PROMPT ---------- */
+  #save-overlay{ position:fixed; inset:0; z-index:40; background:rgba(10,12,17,0.75); display:none; align-items:center; justify-content:center; padding:24px; backdrop-filter:blur(4px); }
+  #save-overlay.active{ display:flex; }
+  #save-card{ width:100%; max-width:380px; background:var(--panel-solid); border:1px solid var(--line); border-radius:2px; padding:28px 24px; }
+  #save-card h2{ margin:0 0 4px; font-size:20px; }
+  #save-card .summary{ font-family:'Space Mono', monospace; font-size:12px; color:var(--paper-dim); margin-bottom:18px; }
+  #save-card input{ width:100%; background:rgba(255,255,255,0.03); border:1px solid var(--line); color:var(--paper); padding:11px 12px; font-size:14px; border-radius:1px; margin-bottom:14px; font-family:'Space Grotesk', sans-serif; }
+  #save-card input:focus{ outline:none; border-color:var(--amber); }
+  .save-actions{ display:flex; gap:10px; }
+  .save-actions button{ flex:1; padding:12px; border-radius:1px; font-size:13.5px; font-weight:700; cursor:pointer; }
+  #discard-btn{ background:transparent; border:1px solid var(--line); color:var(--paper-dim); }
+  #confirm-save-btn{ background:var(--amber); border:none; color:var(--ink); }
+
+  /* ---------- HISTORY ---------- */
+  #screen-history{ background:var(--ink); flex-direction:column; }
+  #hist-top{ padding:20px; display:flex; align-items:center; gap:14px; border-bottom:1px solid var(--line); }
+  #hist-top h1{ font-size:20px; margin:0; }
+  #hist-list{ flex:1; overflow-y:auto; padding:12px 16px 30px; }
+  .trip-row{ background:var(--panel-solid); border:1px solid var(--line); border-radius:2px; padding:14px 16px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
+  .trip-row:hover{ border-color:var(--amber); }
+  .trip-info .name{ font-size:14.5px; font-weight:500; }
+  .trip-info .meta{ font-family:'Space Mono', monospace; font-size:11px; color:var(--paper-dim); margin-top:5px; }
+  .trip-del{ width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--paper-dim); font-size:16px; background:transparent; border:none; cursor:pointer; }
+  .trip-del:hover{ color:var(--danger); }
+  #hist-empty{ text-align:center; color:var(--paper-dim); font-size:13px; margin-top:60px; padding:0 30px; line-height:1.6; }
+
+  /* ---------- TRIP VIEW ---------- */
+  #screen-trip{ flex-direction:column; pointer-events:none; }
+  #screen-trip > *{ pointer-events:auto; }
+  #trip-top{ padding:20px; display:flex; justify-content:space-between; align-items:flex-start; background:linear-gradient(to bottom, rgba(16,19,26,0.8), transparent); padding-bottom:40px; }
+  #trip-name{ font-size:18px; font-weight:700; }
+  #trip-date{ font-family:'Space Mono', monospace; font-size:11px; color:var(--paper-dim); margin-top:3px; }
+  #trip-stats{ margin-top:auto; padding:0 16px 30px; }
+
+  .back-btn{ background:var(--panel); border:1px solid var(--line); color:var(--paper); font-size:13px; padding:9px 14px; border-radius:2px; cursor:pointer; backdrop-filter:blur(8px); }
+  .back-btn:hover{ border-color:var(--amber); }
+
+  #perm-error{ position:fixed; top:20px; left:50%; transform:translateX(-50%); background:var(--panel-solid); border:1px solid var(--danger); padding:12px 18px; border-radius:2px; font-size:12.5px; z-index:60; display:none; max-width:280px; text-align:center; line-height:1.5; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="perm-error"></div>
+
+<!-- HOME -->
+<div id="screen-home" class="screen active">
+  <div id="home-top">
+    <div id="brand">
+      <span class="mark">GPS TRACKER</span>
+      <h1>Trace</h1>
+    </div>
+    <button class="icon-btn" id="open-history" title="Historique">☰</button>
+  </div>
+  <div id="home-bottom">
+    <div id="gps-status"><span id="gps-dot"></span><span id="gps-text">Localisation…</span></div>
+    <button id="record-btn"><div class="dot"></div></button>
+    <div id="record-hint">Appuie pour démarrer un trajet</div>
+  </div>
+</div>
+
+<!-- RECORDING -->
+<div id="screen-recording" class="screen">
+  <div id="rec-top">
+    <div id="rec-badge"><div class="pulse"></div><span>Enregistrement</span></div>
+  </div>
+  <div id="rec-stats">
+    <div id="rec-stats-panel">
+      <div class="stat"><div class="val mono" id="rec-distance">0.00</div><div class="lbl">km</div></div>
+      <div class="stat"><div class="val mono" id="rec-duration">00:00</div><div class="lbl">durée</div></div>
+      <div class="stat"><div class="val mono" id="rec-speed">0.0</div><div class="lbl">km/h</div></div>
+    </div>
+    <button id="stop-btn">Arrêter le trajet</button>
+  </div>
+</div>
+
+<!-- SAVE PROMPT -->
+<div id="save-overlay">
+  <div id="save-card">
+    <h2>Trajet terminé</h2>
+    <div class="summary" id="save-summary"></div>
+    <input id="save-name" type="text" placeholder="Nom du trajet">
+    <div class="save-actions">
+      <button id="discard-btn">Supprimer</button>
+      <button id="confirm-save-btn">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- HISTORY -->
+<div id="screen-history" class="screen">
+  <div id="hist-top">
+    <button class="back-btn" id="hist-back">← Retour</button>
+    <h1>Mes trajets</h1>
+  </div>
+  <div id="hist-list"></div>
+</div>
+
+<!-- TRIP VIEW -->
+<div id="screen-trip" class="screen">
+  <div id="trip-top">
+    <div><div id="trip-name"></div><div id="trip-date"></div></div>
+    <button class="back-btn" id="trip-back">← Retour</button>
+  </div>
+  <div id="trip-stats">
+    <div id="rec-stats-panel" style="display:flex;">
+      <div class="stat"><div class="val mono" id="tv-distance">0.00</div><div class="lbl">km</div></div>
+      <div class="stat"><div class="val mono" id="tv-duration">00:00</div><div class="lbl">durée</div></div>
+      <div class="stat"><div class="val mono" id="tv-speed">0.0</div><div class="lbl">km/h moy.</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const STORAGE_KEY = 'trace_trips_v1';
+
+  function loadTrips(){
+    try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
+    catch(e){ return []; }
+  }
+  function saveTrips(trips){
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trips));
+  }
+
+  function haversine(lat1, lon1, lat2, lon2){
+    const R = 6371000, toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+  function fmtDuration(sec){
+    sec = Math.floor(sec);
+    const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+  function fmtDate(iso){
+    const d = new Date(iso);
+    return d.toLocaleDateString('fr-FR', { day:'2-digit', month:'short', year:'numeric' }) + ' · ' +
+           d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
+  }
+
+  // ---- Map setup ----
+  const map = L.map('map', { zoomControl: false, attributionControl: true }).setView([35.681, 139.767], 15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+
+  let userMarker = null;
+  function placeUserMarker(lat, lon){
+    if (!userMarker){
+      userMarker = L.circleMarker([lat, lon], { radius: 7, color:'#E3A34E', fillColor:'#E3A34E', fillOpacity:1, weight:2 }).addTo(map);
+    } else {
+      userMarker.setLatLng([lat, lon]);
+    }
+  }
+
+  function showPermError(msg){
+    const el = document.getElementById('perm-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+    setTimeout(()=> el.style.display = 'none', 5000);
+  }
+
+  // ---- Screen switching ----
+  function showScreen(id){
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  // ---- Initial location fix (center the map) ----
+  if (navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+        placeUserMarker(pos.coords.latitude, pos.coords.longitude);
+        document.getElementById('gps-dot').classList.add('ok');
+        document.getElementById('gps-text').textContent = 'GPS prêt';
+      },
+      err => {
+        document.getElementById('gps-dot').classList.add('bad');
+        document.getElementById('gps-text').textContent = 'Localisation indisponible';
+        showPermError("Impossible d'accéder à ta position. Autorise la localisation dans les réglages du navigateur pour utiliser l'app.");
+      },
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  } else {
+    document.getElementById('gps-text').textContent = 'GPS non supporté';
+  }
+
+  // ---- Recording state ----
+  let recording = false;
+  let watchId = null;
+  let recPoints = [];      // [{lat, lon, t}]
+  let recDistance = 0;     // meters
+  let recStartTime = 0;
+  let recTimerInt = null;
+  let recPolyline = null;
+  let recMarker = null;
+
+  const MIN_ACCURACY = 35;   // ignore fixes worse than this (meters)
+  const MIN_STEP_DIST = 2;   // ignore GPS jitter below this (meters)
+
+  function onGpsUpdate(pos){
+    const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+    placeUserMarker(lat, lon);
+    document.getElementById('gps-dot').classList.add('ok');
+    document.getElementById('gps-dot').classList.remove('bad');
+
+    if (!recording) return;
+    if (accuracy && accuracy > MIN_ACCURACY) return; // too noisy, skip this fix
+
+    const last = recPoints[recPoints.length - 1];
+    if (last){
+      const d = haversine(last.lat, last.lon, lat, lon);
+      if (d < MIN_STEP_DIST) return; // jitter while stationary
+      recDistance += d;
+    }
+    recPoints.push({ lat, lon, t: Date.now() });
+    recPolyline.addLatLng([lat, lon]);
+    map.panTo([lat, lon]);
+    updateRecStats();
+  }
+
+  function onGpsError(err){
+    document.getElementById('gps-dot').classList.add('bad');
+    if (err.code === err.PERMISSION_DENIED){
+      showPermError("Localisation refusée. Autorise l'accès GPS dans les réglages du site pour enregistrer un trajet.");
+    }
+  }
+
+  function updateRecStats(){
+    const elapsed = (Date.now() - recStartTime) / 1000;
+    document.getElementById('rec-distance').textContent = (recDistance/1000).toFixed(2);
+    document.getElementById('rec-duration').textContent = fmtDuration(elapsed);
+    const kmh = elapsed > 0 ? (recDistance/1000) / (elapsed/3600) : 0;
+    document.getElementById('rec-speed').textContent = kmh.toFixed(1);
+  }
+
+  function startRecording(){
+    if (!navigator.geolocation){ showPermError("Ton navigateur ne supporte pas la géolocalisation."); return; }
+    recording = true;
+    recPoints = [];
+    recDistance = 0;
+    recStartTime = Date.now();
+
+    recPolyline = L.polyline([], { color: '#E3A34E', weight: 4, opacity: 0.9 }).addTo(map);
+
+    showScreen('screen-recording');
+    updateRecStats();
+    recTimerInt = setInterval(updateRecStats, 1000);
+
+    watchId = navigator.geolocation.watchPosition(onGpsUpdate, onGpsError, {
+      enableHighAccuracy: true, maximumAge: 1000, timeout: 15000
+    });
+  }
+
+  function stopRecording(){
+    recording = false;
+    if (watchId !== null){ navigator.geolocation.clearWatch(watchId); watchId = null; }
+    if (recTimerInt){ clearInterval(recTimerInt); recTimerInt = null; }
+
+    if (recPoints.length < 2){
+      showScreen('screen-home');
+      if (recPolyline){ map.removeLayer(recPolyline); recPolyline = null; }
+      showPermError("Trajet trop court pour être enregistré.");
+      return;
+    }
+
+    const elapsed = (Date.now() - recStartTime) / 1000;
+    const kmh = elapsed > 0 ? (recDistance/1000) / (elapsed/3600) : 0;
+    document.getElementById('save-summary').textContent =
+      `${(recDistance/1000).toFixed(2)} km · ${fmtDuration(elapsed)} · ${kmh.toFixed(1)} km/h moy.`;
+    document.getElementById('save-name').value = new Date().toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' });
+    document.getElementById('save-overlay').classList.add('active');
+  }
+
+  document.getElementById('record-btn').addEventListener('click', startRecording);
+  document.getElementById('stop-btn').addEventListener('click', stopRecording);
+
+  document.getElementById('discard-btn').addEventListener('click', () => {
+    document.getElementById('save-overlay').classList.remove('active');
+    if (recPolyline){ map.removeLayer(recPolyline); recPolyline = null; }
+    showScreen('screen-home');
+  });
+
+  document.getElementById('confirm-save-btn').addEventListener('click', () => {
+    const name = document.getElementById('save-name').value.trim() || 'Trajet sans nom';
+    const elapsed = (Date.now() - recStartTime) / 1000;
+    const trip = {
+      id: 'trip_' + Date.now(),
+      name,
+      dateISO: new Date(recStartTime).toISOString(),
+      distanceM: recDistance,
+      durationS: elapsed,
+      points: recPoints.map(p => [p.lat, p.lon])
+    };
+    const trips = loadTrips();
+    trips.unshift(trip);
+    saveTrips(trips);
+
+    document.getElementById('save-overlay').classList.remove('active');
+    if (recPolyline){ map.removeLayer(recPolyline); recPolyline = null; }
+    showScreen('screen-home');
+  });
+
+  // ---- History screen ----
+  function renderHistory(){
+    const trips = loadTrips();
+    const list = document.getElementById('hist-list');
+    list.innerHTML = '';
+    if (!trips.length){
+      list.innerHTML = '<div id="hist-empty">Aucun trajet enregistré pour l\'instant.<br>Lance ton premier trajet depuis l\'écran principal.</div>';
+      return;
+    }
+    trips.forEach(trip => {
+      const row = document.createElement('div');
+      row.className = 'trip-row';
+      const kmh = trip.durationS > 0 ? (trip.distanceM/1000) / (trip.durationS/3600) : 0;
+      row.innerHTML = `
+        <div class="trip-info">
+          <div class="name">${escapeHtml(trip.name)}</div>
+          <div class="meta">${fmtDate(trip.dateISO)} · ${(trip.distanceM/1000).toFixed(2)} km · ${fmtDuration(trip.durationS)}</div>
+        </div>
+        <button class="trip-del" data-id="${trip.id}" title="Supprimer">✕</button>
+      `;
+      row.addEventListener('click', (e) => {
+        if (e.target.classList.contains('trip-del')) return;
+        openTrip(trip.id);
+      });
+      row.querySelector('.trip-del').addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteTrip(trip.id);
+      });
+      list.appendChild(row);
+    });
+  }
+
+  function escapeHtml(s){
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function deleteTrip(id){
+    let trips = loadTrips();
+    trips = trips.filter(t => t.id !== id);
+    saveTrips(trips);
+    renderHistory();
+  }
+
+  let tripViewLayer = null;
+  function openTrip(id){
+    const trips = loadTrips();
+    const trip = trips.find(t => t.id === id);
+    if (!trip) return;
+
+    document.getElementById('trip-name').textContent = trip.name;
+    document.getElementById('trip-date').textContent = fmtDate(trip.dateISO);
+    document.getElementById('tv-distance').textContent = (trip.distanceM/1000).toFixed(2);
+    document.getElementById('tv-duration').textContent = fmtDuration(trip.durationS);
+    const kmh = trip.durationS > 0 ? (trip.distanceM/1000) / (trip.durationS/3600) : 0;
+    document.getElementById('tv-speed').textContent = kmh.toFixed(1);
+
+    if (tripViewLayer){ map.removeLayer(tripViewLayer); tripViewLayer = null; }
+    tripViewLayer = L.polyline(trip.points, { color: '#E3A34E', weight: 4, opacity: 0.9 }).addTo(map);
+    map.fitBounds(tripViewLayer.getBounds(), { padding: [40, 40] });
+
+    showScreen('screen-trip');
+  }
+
+  document.getElementById('open-history').addEventListener('click', () => {
+    renderHistory();
+    showScreen('screen-history');
+  });
+  document.getElementById('hist-back').addEventListener('click', () => showScreen('screen-home'));
+  document.getElementById('trip-back').addEventListener('click', () => {
+    if (tripViewLayer){ map.removeLayer(tripViewLayer); tripViewLayer = null; }
+    showScreen('screen-home');
+  });
+
+  // Warn before leaving mid-recording (accidental tab close / navigation)
+  window.addEventListener('beforeunload', (e) => {
+    if (recording){ e.preventDefault(); e.returnValue = ''; }
+  });
+</script>
+</body>
+</html>
